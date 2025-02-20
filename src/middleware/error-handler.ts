@@ -2,6 +2,8 @@ import {Request,Response, NextFunction } from "express";
 import { GameError } from "../errors/game-error";
 
 export function globalErrorHandler(err: any, req: Request, res: Response, next: NextFunction) {
+    console.error(err.stack);
+    
     if(err instanceof GameError){
         res.status(err.status).json({
             error: err.message
