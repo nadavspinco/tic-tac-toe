@@ -1,16 +1,15 @@
 // src/services/gameService.ts
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
-import { BoardPosition, Game } from "../interface/game";
+import { BoardPosition } from "../interface/game";
 import { APP_JWT_KEY } from "../app";
 import { GameWasntFound } from "../errors/game-wasnt-found";
 import { NotYourTurn } from "../errors/not-your-turn";
 import { GameEnded } from "../errors/game-ended";
 import { PostionAlreadyTaken } from "../errors/position-already-taken";
+import GameModel, { IGame } from "../models/game";
 
-// In-memory storage for games
-const games: { [gameId: string]: Game } = {};
-
+const MAX_MOVES = 9
 // Helper function to check for a winner
 const checkWinner = (board: string[]): "X" | "O" | null => {
   const winningCombos: number[][] = [
@@ -33,14 +32,14 @@ const checkWinner = (board: string[]): "X" | "O" | null => {
 };
 
 // Create a new game with the initiating player as "X"
-export const initiateGame = () => {
+export const initiateGame = async () => {
   const gameId = crypto.randomBytes(4).toString("hex");
   const playerId = crypto.randomBytes(4).toString("hex");
 
   // Sign a JWT for the initiating player
   const token = jwt.sign({ gameId, playerId, role: "X" }, APP_JWT_KEY, { expiresIn: "1h" });
 
-  const newGame: Game = {
+  const newGameData: Partial<IGame> = {
     gameId,
     board: Array(9).fill(""),
     currentPlayer: "X",
@@ -49,14 +48,15 @@ export const initiateGame = () => {
     players: { X: playerId },
   };
 
-  games[gameId] = newGame;
+  const newGame = new GameModel(newGameData);
+  await newGame.save();
 
   return { gameId, token };
 };
 
 // Allow a second player to join an existing game as "O"
-export const joinGame = (gameId: string) => {
-  const game = games[gameId];
+export const joinGame = async (gameId: string) => {
+  const game = await GameModel.findOne({ gameId });
   if (!game) {
     throw new GameWasntFound();
   }
@@ -65,35 +65,39 @@ export const joinGame = (gameId: string) => {
   }
   const playerId = crypto.randomBytes(4).toString("hex");
   game.players.O = playerId;
+  await game.save();
 
   const token = jwt.sign({ gameId, playerId, role: "O" }, APP_JWT_KEY, { expiresIn: "1h" });
   return { token };
 };
 
 // Retrieve the current state of a game
-export const getGameState = (gameId: string): Game => {
-  const game = games[gameId];
+export const getGameState = async (gameId: string): Promise<IGame> => {
+  const game = await GameModel.findOne({ gameId });
   if (!game) {
-    throw new Error("Game not found");
+    throw new GameWasntFound();
   }
   return game;
 };
 
 // Make a move in the game
-export const makeMove = (gameId: string, role: "X" | "O", position: BoardPosition): Game => {
-  const game = games[gameId];
+export const makeMove = async (
+  gameId: string,
+  role: "X" | "O",
+  position: BoardPosition
+): Promise<IGame> => {
+  const game = await GameModel.findOne({ gameId });
   if (!game) {
     throw new GameWasntFound();
   }
   if (game.winner) {
     throw new GameEnded();
   }
-
   if (game.currentPlayer !== role) {
     throw new NotYourTurn();
   }
   if (game.board[position] !== "") {
-    throw new PostionAlreadyTaken()
+    throw new PostionAlreadyTaken();
   }
 
   // Record the move
@@ -104,12 +108,11 @@ export const makeMove = (gameId: string, role: "X" | "O", position: BoardPositio
   const win = checkWinner(game.board);
   if (win) {
     game.winner = win;
-  } else if (game.moves === 9) {
+  } else if (game.moves === MAX_MOVES) {
     game.winner = "Draw";
   } else {
     game.currentPlayer = game.currentPlayer === "X" ? "O" : "X";
   }
-
+  await game.save();
   return game;
 };
-
